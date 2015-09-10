@@ -1,0 +1,46 @@
+<div class="container">
+    <div class="row">
+        <div class="col-md-3"></div>
+        <div class="col-md-6">
+            <h2>TODO Items</h2>
+            <form role="form" ng-submit="addTodo()">
+                <div class="row">
+                    <div class="input-group">
+                        <input type="text" ng-model="todo" placeholder="Add what needs to be done!!" maxlength="140" 
+                               class="form-control">
+                        <span class="input-group-btn">
+                            <input type="submit" class="btn btn-primary" value="Add">
+                        </span>
+                    </div>
+                </div>
+            </form>
+            <!-- TODO list -->
+            <div class="col-md-6">
+                <h4>TODO</h4>
+                <div class="input-group" ng-repeat="todo in todosList track by $index">
+                    <input type="text" ng-model="todo" class="form-control">
+                    <span class="input-group-btn">                    
+                        <button class="btn btn-danger" ng-click="removeTodo($index)" title="Delete TODO" 
+                                aria-label="Remove">X</button>
+                        <button class="btn btn-default" ng-click="completeTodo($index)" title="Mark as Complete">
+                            <span class="glyphicon glyphicon-ok"></span>
+                        </button>
+                    </span>
+                </div>
+                <div ng-if="!todosList.length">No TODO items.</div>
+            </div>
+            <div class="col-md-6">
+                <h4>Completed</h4>
+                <div class="input-group" ng-repeat="todo in completedList track by $index">
+                    <input type="text" ng-model="todo" class="form-control">
+                    <span class="input-group-btn">                    
+                        <button class="btn btn-danger" ng-click="removeCompletedTodo($index)" aria-label="Remove">X</button>
+                    </span>
+                </div>
+                <div ng-if="!completedList.length">No Completed items.</div>
+            </div>
+        </div>
+        <div class="col-md-3"></div>
+    </div>
+
+</div>

@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- 3rd party libraries -->
+    <script src="libraries/angular.js"></script>
+    <script src="libraries/angular-route.js"></script>
+    <script src="libraries/angular-local-storage.js"></script>
+    
+    <link rel="stylesheet" type="text/css" href="libraries/bootstrap/dist/css/bootstrap.css">
+    
+    <script src="app.js"></script>    
+    <script src="commons/config.js"></script>    
+    <script src="controllers/homeController.js"></script>
+</head>
+
+<body ng-app="todo.ui">
+    <title>TODO</title>
+    <div id="headerDiv" ng-include="'views/header.html'"></div>
+    <div id="ngViewDiv" class="container" ng-view></div>
+    <div id="footerDiv" ng-include="'views/footer.html'"></div>
+</body>
+</html>
