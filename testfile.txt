@@ -1,76 +1,188 @@
-# app/main.py
-from fastapi import FastAPI, HTTPException, Depends
-from fastapi.middleware.cors import CORSMiddleware
+# app/api/clients.py
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-import os
-from dotenv import load_dotenv
+from typing import List
+from ..models.database import get_db
+from ..models.client import Client, FinancialData
+from pydantic import BaseModel
 
-from .models.database import get_db, create_tables
-from .api import clients, queries, tasks
-from .data.startup_loader import populate_database_on_startup
+router = APIRouter()
 
-load_dotenv()
+class ClientResponse(BaseModel):
+    id: int
+    name: str
+    industry: str
+    risk_score: float
+    aliases: List[str] = []
+    
+    class Config:
+        from_attributes = True
 
-# Create FastAPI app
-app = FastAPI(
-    title="Client Info Assistant API",
-    description="AI-powered client information and risk assessment system",
-    version="1.0.0"
-)
+@router.get("/clients", response_model=List[ClientResponse])
+async def get_all_clients(db: Session = Depends(get_db)):
+    """Get all clients"""
+    clients = db.query(Client).all()
+    return clients
 
-# CORS middleware for frontend communication
-allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+@router.get("/clients/{client_id}", response_model=ClientResponse)
+async def get_client(client_id: int, db: Session = Depends(get_db)):
+    """Get specific client by ID"""
+    client = db.query(Client).filter(Client.id == client_id).first()
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    return client
 
-# Startup event
-@app.on_event("startup")
-async def startup_event():
-    """Initialize database and load demo data on startup"""
-    print("Starting Client Info Assistant API...")
-    create_tables()
-    populate_database_on_startup()
-    print("API ready!")
-
-# Health check endpoint
-@app.get("/")
-async def root():
-    return {
-        "message": "Client Info Assistant API",
-        "status": "running",
-        "version": "1.0.0"
-    }
-
-@app.get("/health")
-async def health_check():
-    return {"status": "healthy"}
-
-# Include routers
-app.include_router(clients.router, prefix="/api", tags=["clients"])
-app.include_router(queries.router, prefix="/api", tags=["queries"])
-app.include_router(tasks.router, prefix="/api", tags=["tasks"])
+@router.get("/clients/{client_id}/financial")
+async def get_client_financial_data(client_id: int, db: Session = Depends(get_db)):
+    """Get financial data for a client"""
+    financial_data = db.query(FinancialData).filter(
+        FinancialData.client_id == client_id
+    ).all()
+    
+    if not financial_data:
+        raise HTTPException(status_code=404, detail="No financial data found")
+    
+    return [
+        {
+            "period": data.period,
+            "revenue": data.revenue,
+            "profit": data.profit,
+            "debt_ratio": data.debt_ratio,
+            "file_path": data.file_path
+        }
+        for data in financial_data
+    ]
 
 # -------------------------------------------------------------------
-# run.py (in backend root)
-import uvicorn
-import os
-from dotenv import load_dotenv
+# app/api/queries.py
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from pydantic import BaseModel
+from ..models.database import get_db
+from ..services.ai_agent import ClientInfoAgent
 
-load_dotenv()
+router = APIRouter()
 
-if __name__ == "__main__":
-    host = os.getenv("APP_HOST", "0.0.0.0")
-    port = int(os.getenv("APP_PORT", 8000))
-    debug = os.getenv("DEBUG", "True").lower() == "true"
+class QueryRequest(BaseModel):
+    query: str
+
+class QueryResponse(BaseModel):
+    response: str
+    query: str
+    processing_time: float = 0.0
+
+@router.post("/query", response_model=QueryResponse)
+async def process_query(request: QueryRequest, db: Session = Depends(get_db)):
+    """Process natural language query about clients"""
+    try:
+        import time
+        start_time = time.time()
+        
+        # Initialize AI agent with database session
+        agent = ClientInfoAgent(db)
+        
+        # Process the query
+        response = agent.process_query(request.query)
+        
+        processing_time = time.time() - start_time
+        
+        return QueryResponse(
+            response=response,
+            query=request.query,
+            processing_time=processing_time
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing query: {str(e)}")
+
+# -------------------------------------------------------------------
+# app/api/tasks.py
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from typing import List
+from datetime import datetime
+from pydantic import BaseModel
+from ..models.database import get_db
+from ..models.client import Task, Client
+
+router = APIRouter()
+
+class TaskResponse(BaseModel):
+    id: int
+    client_id: int
+    client_name: str
+    description: str
+    priority: str
+    status: str
+    created_at: datetime
     
-    uvicorn.run(
-        "app.main:app",
-        host=host,
-        port=port,
-        reload=debug
-    )
+    class Config:
+        from_attributes = True
+
+class TaskCompleteRequest(BaseModel):
+    financial_data: dict = None  # Optional financial data to add
+    notes: str = ""
+
+@router.get("/tasks", response_model=List[TaskResponse])
+async def get_all_tasks(status: str = None, db: Session = Depends(get_db)):
+    """Get all tasks, optionally filtered by status"""
+    query = db.query(Task).join(Client)
+    
+    if status:
+        query = query.filter(Task.status == status)
+    
+    tasks = query.all()
+    
+    return [
+        TaskResponse(
+            id=task.id,
+            client_id=task.client_id,
+            client_name=task.client.name,
+            description=task.description,
+            priority=task.priority,
+            status=task.status,
+            created_at=task.created_at
+        )
+        for task in tasks
+    ]
+
+@router.post("/tasks/{task_id}/complete")
+async def complete_task(
+    task_id: int, 
+    request: TaskCompleteRequest,
+    db: Session = Depends(get_db)
+):
+    """Mark a task as completed and optionally add new data"""
+    task = db.query(Task).filter(Task.id == task_id).first()
+    
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    if task.status == "completed":
+        raise HTTPException(status_code=400, detail="Task already completed")
+    
+    # Mark task as completed
+    task.status = "completed"
+    task.completed_at = datetime.utcnow()
+    
+    # If financial data provided, add it to the database
+    if request.financial_data:
+        from ..models.client import FinancialData
+        
+        financial_record = FinancialData(
+            client_id=task.client_id,
+            period=request.financial_data.get("period"),
+            revenue=request.financial_data.get("revenue"),
+            profit=request.financial_data.get("profit"),
+            debt_ratio=request.financial_data.get("debt_ratio"),
+            file_path=request.financial_data.get("file_path", "manual_entry")
+        )
+        db.add(financial_record)
+    
+    db.commit()
+    
+    return {
+        "message": "Task completed successfully",
+        "task_id": task_id,
+        "data_added": bool(request.financial_data)
+    }
