@@ -1,61 +1,110 @@
-# Fresh Start - Client Info Assistant Implementation
-# ================================================
+# app/models/database.py
+from sqlalchemy import create_engine
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+import os
 
-# Step 1: Create Project Structure
-echo "🚀 Creating project structure..."
+# Ensure data directory exists
+os.makedirs("./data", exist_ok=True)
 
-mkdir client-info-assistant
-cd client-info-assistant
+# SQLite database URL
+DATABASE_URL = "sqlite:///./data/database.db"
 
-# Create backend structure
-mkdir -p backend/{app/{models,services,api},data}
-mkdir frontend
+# Create engine
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={"check_same_thread": False}  # Only needed for SQLite
+)
 
-# Create necessary files
-cd backend
-touch app/__init__.py
-touch app/models/__init__.py
-touch app/services/__init__.py
-touch app/api/__init__.py
-touch requirements.txt
-touch .env
-touch run.py
+# Create session factory
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-echo "✅ Project structure created"
+# Create base class for models
+Base = declarative_base()
 
+# Dependency to get database session
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
-# requirements.txt - Step 1: Core Dependencies
-fastapi==0.104.1
-uvicorn==0.24.0
-python-dotenv==1.0.0
-
-
-# .env file
-DEBUG=True
-APP_HOST=0.0.0.0
-APP_PORT=8000
-
-# Add these later when we implement AI features
-# OPENAI_API_KEY=your_key_here
+# Function to create all tables
+def create_tables():
+    Base.metadata.create_all(bind=engine)
+    print("✅ Database tables created successfully!")
 
 
-# app/__init__.py
-# Empty file
+# app/models/client.py
+from sqlalchemy import Column, Integer, String, Float, DateTime, JSON, ForeignKey, Text
+from sqlalchemy.orm import relationship
+from datetime import datetime
+from .database import Base
 
-# app/main.py
-from fastapi import FastAPI
+class Client(Base):
+    __tablename__ = "clients"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, index=True)
+    aliases = Column(JSON)  # Alternative names for fuzzy matching
+    industry = Column(String)
+    risk_score = Column(Float, default=0.0)
+    last_updated = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    financial_data = relationship("FinancialData", back_populates="client")
+    tasks = relationship("Task", back_populates="client")
+
+class FinancialData(Base):
+    __tablename__ = "financial_data"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"))
+    period = Column(String, nullable=False)  # "2023", "2024-Q1", etc.
+    revenue = Column(Float)
+    profit = Column(Float)
+    debt_ratio = Column(Float)
+    extracted_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationship
+    client = relationship("Client", back_populates="financial_data")
+
+class Task(Base):
+    __tablename__ = "tasks"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"))
+    description = Column(Text, nullable=False)
+    priority = Column(String, default="medium")  # "high", "medium", "low"
+    status = Column(String, default="pending")   # "pending", "completed"
+    task_type = Column(String)  # "financial_data", "compliance_review", etc.
+    created_at = Column(DateTime, default=datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
+    
+    # Relationship
+    client = relationship("Client", back_populates="tasks")
+
+# app/main.py - Updated with database support
+from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session
 from dotenv import load_dotenv
+from typing import List
+
+# Import database components
+from .models.database import get_db, create_tables
+from .models.client import Client, FinancialData, Task
 
 load_dotenv()
 
 app = FastAPI(
     title="Client Info Assistant",
     description="AI-powered client data management system",
-    version="0.1.0"
+    version="0.2.0"
 )
 
-# Enable CORS for frontend
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://localhost:5173"],
@@ -64,37 +113,239 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Startup event to create database
+@app.on_event("startup")
+async def startup_event():
+    print("🚀 Starting Client Info Assistant API...")
+    create_tables()
+    print("✅ Database initialized!")
+
 @app.get("/")
 async def root():
     return {
         "message": "Client Info Assistant API",
         "status": "running",
-        "version": "0.1.0"
+        "version": "0.2.0",
+        "features": ["database", "basic_crud"]
     }
 
 @app.get("/health")
-async def health():
-    return {"status": "healthy"}
+async def health(db: Session = Depends(get_db)):
+    try:
+        # Test database connection
+        client_count = db.query(Client).count()
+        task_count = db.query(Task).count()
+        
+        return {
+            "status": "healthy",
+            "database": "connected",
+            "clients": client_count,
+            "tasks": task_count
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "database": "failed",
+            "error": str(e)
+        }
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+# Basic CRUD endpoints for testing
+@app.get("/clients")
+async def get_clients(db: Session = Depends(get_db)):
+    """Get all clients"""
+    clients = db.query(Client).all()
+    return [
+        {
+            "id": client.id,
+            "name": client.name,
+            "industry": client.industry,
+            "risk_score": client.risk_score,
+            "aliases": client.aliases or []
+        }
+        for client in clients
+    ]
 
-# run.py
-import uvicorn
-from dotenv import load_dotenv
-import os
-
-load_dotenv()
-
-if __name__ == "__main__":
-    print("🚀 Starting Client Info Assistant API...")
-    print("📍 API: http://localhost:8000")
-    print("📖 Docs: http://localhost:8000/docs")
-    
-    uvicorn.run(
-        "app.main:app",
-        host=os.getenv("APP_HOST", "0.0.0.0"),
-        port=int(os.getenv("APP_PORT", 8000)),
-        reload=True
+@app.post("/clients")
+async def create_client(
+    name: str,
+    industry: str = None,
+    aliases: List[str] = None,
+    db: Session = Depends(get_db)
+):
+    """Create a new client"""
+    client = Client(
+        name=name,
+        industry=industry,
+        aliases=aliases or [],
+        risk_score=0.0
     )
+    
+    db.add(client)
+    db.commit()
+    db.refresh(client)
+    
+    return {
+        "id": client.id,
+        "name": client.name,
+        "industry": client.industry,
+        "message": "Client created successfully"
+    }
+
+@app.get("/clients/{client_id}")
+async def get_client(client_id: int, db: Session = Depends(get_db)):
+    """Get specific client with financial data and tasks"""
+    client = db.query(Client).filter(Client.id == client_id).first()
+    
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    
+    return {
+        "id": client.id,
+        "name": client.name,
+        "industry": client.industry,
+        "risk_score": client.risk_score,
+        "aliases": client.aliases or [],
+        "financial_data": [
+            {
+                "period": fd.period,
+                "revenue": fd.revenue,
+                "profit": fd.profit,
+                "debt_ratio": fd.debt_ratio
+            }
+            for fd in client.financial_data
+        ],
+        "tasks": [
+            {
+                "id": task.id,
+                "description": task.description,
+                "priority": task.priority,
+                "status": task.status,
+                "created_at": task.created_at.isoformat()
+            }
+            for task in client.tasks
+        ]
+    }
+
+@app.get("/tasks")
+async def get_tasks(status: str = None, db: Session = Depends(get_db)):
+    """Get all tasks, optionally filter by status"""
+    query = db.query(Task).join(Client)
+    
+    if status:
+        query = query.filter(Task.status == status)
+    
+    tasks = query.all()
+    
+    return [
+        {
+            "id": task.id,
+            "client_name": task.client.name,
+            "description": task.description,
+            "priority": task.priority,
+            "status": task.status,
+            "created_at": task.created_at.isoformat()
+        }
+        for task in tasks
+    ]
+
+# Test endpoints
+@app.post("/test/create-sample-data")
+async def create_sample_data(db: Session = Depends(get_db)):
+    """Create some sample data for testing"""
+    
+    # Clear existing data
+    db.query(Task).delete()
+    db.query(FinancialData).delete()
+    db.query(Client).delete()
+    
+    # Create sample clients
+    clients_data = [
+        {
+            "name": "Tech Corp Inc",
+            "industry": "Technology",
+            "aliases": ["TechCorp", "Tech Corp", "TC Inc"],
+            "risk_score": 0.35
+        },
+        {
+            "name": "Manufacturing Ltd", 
+            "industry": "Manufacturing",
+            "aliases": ["Mfg Ltd", "Manufacturing Limited"],
+            "risk_score": 0.65
+        },
+        {
+            "name": "Retail Solutions",
+            "industry": "Retail", 
+            "aliases": ["RetailSol", "RS Inc"],
+            "risk_score": 0.15
+        }
+    ]
+    
+    created_clients = []
+    
+    for client_data in clients_data:
+        client = Client(**client_data)
+        db.add(client)
+        db.commit()
+        db.refresh(client)
+        created_clients.append(client)
+        
+        # Add some financial data
+        if client.name == "Tech Corp Inc":
+            financial_data = [
+                FinancialData(client_id=client.id, period="2023", revenue=1000000, profit=150000, debt_ratio=0.3),
+                FinancialData(client_id=client.id, period="2024-Q1", revenue=300000, profit=45000, debt_ratio=0.32)
+            ]
+        elif client.name == "Manufacturing Ltd":
+            financial_data = [
+                FinancialData(client_id=client.id, period="2023", revenue=2500000, profit=200000, debt_ratio=0.45)
+            ]
+        else:  # Retail Solutions
+            financial_data = [
+                FinancialData(client_id=client.id, period="2023", revenue=800000, profit=120000, debt_ratio=0.25),
+                FinancialData(client_id=client.id, period="2024-Q1", revenue=220000, profit=35000, debt_ratio=0.23),
+                FinancialData(client_id=client.id, period="2024-Q2", revenue=250000, profit=40000, debt_ratio=0.22)
+            ]
+        
+        for fd in financial_data:
+            db.add(fd)
+        
+        # Add some tasks for missing data
+        if client.name == "Tech Corp Inc":
+            # Missing Q2, Q3, Q4
+            missing_periods = ["2024-Q2", "2024-Q3", "2024-Q4"]
+            for period in missing_periods:
+                task = Task(
+                    client_id=client.id,
+                    description=f"Obtain {period} financial data for {client.name}",
+                    priority="high",
+                    task_type="financial_data"
+                )
+                db.add(task)
+        
+        elif client.name == "Manufacturing Ltd":
+            # Missing all 2024 data
+            task = Task(
+                client_id=client.id,
+                description="Obtain 2024 financial data - all quarters missing",
+                priority="high", 
+                task_type="financial_data"
+            )
+            db.add(task)
+    
+    db.commit()
+    
+    return {
+        "message": "Sample data created successfully",
+        "clients_created": len(created_clients),
+        "client_names": [c.name for c in created_clients]
+    }
+
+@app.delete("/test/clear-data")
+async def clear_data(db: Session = Depends(get_db)):
+    """Clear all data from database"""
+    db.query(Task).delete()
+    db.query(FinancialData).delete() 
+    db.query(Client).delete()
+    db.commit()
+    
+    return {"message": "All data cleared successfully"}
