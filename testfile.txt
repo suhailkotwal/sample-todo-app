@@ -1,39 +1,379 @@
-def process_query_with_history(self, user_query: str, chat_history: List = None) -> str:
-        """Process a natural language query with conversation history"""
-        try:
-            # Format chat history for LangChain agent
-            formatted_history = []
-            if chat_history:
-                # Take last 10 messages to avoid token limits
-                recent_history = chat_history[-10:] if len(chat_history) > 10 else chat_history
-                
-                for msg in recent_history:
-                    if hasattr(msg, 'role') and hasattr(msg, 'content'):
-                        # Handle Pydantic models
-                        role = msg.role
-                        content = msg.content
-                    elif isinstance(msg, dict):
-                        # Handle dictionaries
-                        role = msg.get('role')
-                        content = msg.get('content')
-                    elif isinstance(msg, tuple) and len(msg) == 2:
-                        # Handle tuples (role, content)
-                        role, content = msg
-                    else:
-                        continue
-                    
-                    # Convert to LangChain format
-                    if role == "user":
-                        formatted_history.append(("human", content))
-                    elif role == "assistant":
-                        formatted_history.append(("ai", content))
-            
-            # Process with history
-            result = self.agent_executor.invoke({
-                "input": user_query,
-                "chat_history": formatted_history
-            })
-            
-            return result["output"]
-        except Exception as e:
-            return f"I apologize, but I encountered an error processing your query: {str(e)}"
+import React, { useState, useRef, useCallback, forwardRef, useImperativeHandle } from 'react';
+import { AgGridReact } from 'ag-grid-react';
+import { Edit2, Save, X } from 'lucide-react';
+
+// Module-level variable to capture editor value reliably
+let editorValue = null;
+
+// Custom Large Text Editor Component
+const LargeTextEditor = forwardRef((props, ref) => {
+  const [value, setValue] = useState(props.value);
+  const textareaRef = useRef(null);
+
+  // Initialize editor value
+  React.useEffect(() => {
+    editorValue = props.value;
+  }, [props.value]);
+
+  useImperativeHandle(ref, () => ({
+    getValue: () => value,
+    afterGuiAttached: () => {
+      if (textareaRef.current) {
+        textareaRef.current.focus();
+      }
+    }
+  }));
+
+  const handleChange = (e) => {
+    const newVal = e.target.value;
+    setValue(newVal);
+    editorValue = newVal; // Update module variable
+  };
+
+  return (
+    <div className="p-4 bg-white rounded-lg shadow-lg border-2 border-blue-500" style={{ width: '500px', minHeight: '200px' }}>
+      <div className="mb-2 font-semibold text-gray-700">Edit Notes</div>
+      <textarea
+        ref={textareaRef}
+        value={value}
+        onChange={handleChange}
+        className="w-full h-40 px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+        placeholder="Enter notes..."
+      />
+      <div className="mt-2 text-sm text-gray-500">
+        Click outside or press Escape to close
+      </div>
+    </div>
+  );
+});
+
+const AGGridCustomEdit = () => {
+  const gridRef = useRef();
+  const [editingRowId, setEditingRowId] = useState(null);
+  const [editData, setEditData] = useState({});
+  const [originalRowData, setOriginalRowData] = useState({});
+
+  // Sample data
+  const [rowData, setRowData] = useState([
+    { id: 1, name: 'John Doe', email: 'john@example.com', phone: '123-456-7890', department: 'Engineering', status: 'Active', notes: 'Senior developer with 5 years experience', salary: '$120,000', location: 'New York', joinDate: '2020-01-15' },
+    { id: 2, name: 'Jane Smith', email: 'jane@example.com', phone: '098-765-4321', department: 'Marketing', status: 'Active', notes: 'Marketing specialist focusing on digital campaigns', salary: '$95,000', location: 'San Francisco', joinDate: '2021-03-22' },
+    { id: 3, name: 'Bob Johnson', email: 'bob@example.com', phone: '555-123-4567', department: 'Sales', status: 'On Leave', notes: 'Top performer in Q3 2024', salary: '$85,000', location: 'Chicago', joinDate: '2019-07-10' },
+  ]);
+
+  // Dropdown options
+  const departmentOptions = ['Engineering', 'Marketing', 'Sales', 'HR', 'Finance'];
+  const statusOptions = ['Active', 'On Leave', 'Inactive'];
+
+  const handleCellEditingStopped = useCallback((event) => {
+    if (event.column.getColId() === 'notes') {
+      // Use the module-level variable that was updated by the editor
+      const newValue = editorValue;
+      console.log('Cell editing stopped, editorValue:', newValue);
+      if (newValue !== null) {
+        setEditData(prev => {
+          const updated = { ...prev, notes: newValue };
+          console.log('Updated editData with notes:', updated);
+          return updated;
+        });
+      }
+    }
+  }, []);
+
+  // Action cell renderer
+  const ActionCellRenderer = useCallback((props) => {
+    const isEditing = editingRowId === props.data.id;
+
+    const handleEdit = () => {
+      console.log('=== EDIT BUTTON CLICKED ===');
+      const rowId = props.data.id;
+      
+      setEditingRowId(rowId);
+      
+      const original = {
+        department: props.data.department,
+        status: props.data.status,
+        notes: props.data.notes
+      };
+      console.log('Stored original values:', original);
+      setOriginalRowData(original);
+      setEditData(original);
+    };
+
+    const handleSave = async () => {
+      console.log('=== SAVE BUTTON CLICKED ===');
+      console.log('Saving editData:', editData);
+      
+      try {
+        // Simulate API call
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Update grid data
+        setRowData(prevData => prevData.map(row => 
+          row.id === props.data.id 
+            ? { ...row, ...editData }
+            : row
+        ));
+        
+        console.log('Data saved successfully');
+        
+        setEditingRowId(null);
+        setEditData({});
+        setOriginalRowData({});
+      } catch (error) {
+        console.error('Error saving data:', error);
+      }
+    };
+
+    const handleCancel = () => {
+      console.log('=== CANCEL BUTTON CLICKED ===');
+      console.log('Reverting to original:', originalRowData);
+      
+      // Revert to original values in rowData
+      if (originalRowData && Object.keys(originalRowData).length > 0) {
+        setRowData(prevData => prevData.map(row => 
+          row.id === props.data.id 
+            ? { ...row, ...originalRowData }
+            : row
+        ));
+      }
+      
+      // Stop any cell editing
+      if (gridRef.current?.api) {
+        gridRef.current.api.stopEditing(true);
+      }
+      
+      setEditingRowId(null);
+      setEditData({});
+      setOriginalRowData({});
+      console.log('Edit mode exited');
+    };
+
+    if (isEditing) {
+      return (
+        <div className="flex gap-2">
+          <button
+            onClick={handleSave}
+            className="flex items-center gap-1 px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700 text-sm"
+          >
+            <Save size={14} /> Save
+          </button>
+          <button
+            onClick={handleCancel}
+            className="flex items-center gap-1 px-3 py-1 bg-gray-600 text-white rounded hover:bg-gray-700 text-sm"
+          >
+            <X size={14} /> Cancel
+          </button>
+        </div>
+      );
+    }
+
+    return (
+      <button
+        onClick={handleEdit}
+        className="flex items-center gap-1 px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm"
+      >
+        <Edit2 size={14} /> Edit
+      </button>
+    );
+  }, [editingRowId, editData, originalRowData]);
+
+  // Department cell renderer/editor
+  const DepartmentCellRenderer = useCallback((props) => {
+    const isEditing = editingRowId === props.data.id;
+
+    if (isEditing) {
+      return (
+        <select
+          value={editData.department}
+          onChange={(e) => setEditData(prev => ({ ...prev, department: e.target.value }))}
+          onKeyDown={(e) => e.stopPropagation()}
+          className="w-full h-full px-2 py-1 border-2 border-blue-500 rounded focus:outline-none"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {departmentOptions.map(opt => (
+            <option key={opt} value={opt}>{opt}</option>
+          ))}
+        </select>
+      );
+    }
+
+    return <span>{props.value}</span>;
+  }, [editingRowId, editData]);
+
+  // Status cell renderer/editor
+  const StatusCellRenderer = useCallback((props) => {
+    const isEditing = editingRowId === props.data.id;
+
+    if (isEditing) {
+      return (
+        <select
+          value={editData.status}
+          onChange={(e) => setEditData(prev => ({ ...prev, status: e.target.value }))}
+          onKeyDown={(e) => e.stopPropagation()}
+          className="w-full h-full px-2 py-1 border-2 border-blue-500 rounded focus:outline-none"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {statusOptions.map(opt => (
+            <option key={opt} value={opt}>{opt}</option>
+          ))}
+        </select>
+      );
+    }
+
+    return (
+      <span className={`px-2 py-1 rounded text-xs ${
+        props.value === 'Active' ? 'bg-green-100 text-green-800' :
+        props.value === 'On Leave' ? 'bg-yellow-100 text-yellow-800' :
+        'bg-gray-100 text-gray-800'
+      }`}>
+        {props.value}
+      </span>
+    );
+  }, [editingRowId, editData]);
+
+  // Notes cell renderer - shows editData value when editing
+  const NotesCellRenderer = useCallback((props) => {
+    const isEditing = editingRowId === props.data.id;
+    const displayValue = isEditing ? editData.notes : props.value;
+
+    return (
+      <div 
+        className={`overflow-hidden text-ellipsis whitespace-nowrap ${isEditing ? 'cursor-pointer hover:bg-blue-50 border-2 border-blue-300 rounded px-2' : ''}`}
+        title={displayValue}
+      >
+        {displayValue}
+      </div>
+    );
+  }, [editingRowId, editData]);
+
+  const columnDefs = [
+    {
+      headerName: 'Actions',
+      field: 'actions',
+      cellRenderer: ActionCellRenderer,
+      width: 150,
+      pinned: 'left',
+      suppressSizeToFit: true,
+      cellStyle: { display: 'flex', alignItems: 'center' }
+    },
+    {
+      headerName: 'ID',
+      field: 'id',
+      width: 80,
+      suppressSizeToFit: true
+    },
+    {
+      headerName: 'Name',
+      field: 'name',
+      width: 150
+    },
+    {
+      headerName: 'Email',
+      field: 'email',
+      width: 200
+    },
+    {
+      headerName: 'Phone',
+      field: 'phone',
+      width: 150
+    },
+    {
+      headerName: 'Department',
+      field: 'department',
+      cellRenderer: DepartmentCellRenderer,
+      width: 180,
+      cellStyle: (params) => 
+        editingRowId === params.data.id ? { padding: 0 } : {}
+    },
+    {
+      headerName: 'Status',
+      field: 'status',
+      cellRenderer: StatusCellRenderer,
+      width: 150,
+      cellStyle: (params) => 
+        editingRowId === params.data.id ? { padding: 0 } : {}
+    },
+    {
+      headerName: 'Notes',
+      field: 'notes',
+      editable: (params) => editingRowId === params.data.id,
+      cellEditor: LargeTextEditor,
+      cellEditorPopup: true,
+      cellRenderer: NotesCellRenderer,
+      width: 300,
+    },
+    {
+      headerName: 'Salary',
+      field: 'salary',
+      width: 120
+    },
+    {
+      headerName: 'Location',
+      field: 'location',
+      width: 130
+    }
+  ];
+
+  const defaultColDef = {
+    resizable: true,
+    sortable: true,
+    filter: true,
+  };
+
+  return (
+    <div className="w-full h-screen p-6 bg-gray-50">
+      <style>{`
+        .ag-theme-alpine {
+          --ag-background-color: #fff;
+          --ag-header-background-color: #f8f9fa;
+          --ag-odd-row-background-color: #fcfcfc;
+          --ag-border-color: #e2e8f0;
+          --ag-header-foreground-color: #374151;
+          --ag-row-hover-color: #f1f5f9;
+        }
+        .ag-root-wrapper {
+          border: 1px solid #e2e8f0;
+          border-radius: 8px;
+        }
+        .ag-header {
+          font-weight: 600;
+          border-bottom: 2px solid #e2e8f0;
+        }
+        .ag-cell {
+          display: flex;
+          align-items: center;
+          border-right: 1px solid #f1f5f9;
+        }
+        .ag-row {
+          border-bottom: 1px solid #f1f5f9;
+        }
+        .ag-popup {
+          z-index: 1000;
+        }
+      `}</style>
+      <div className="mb-4">
+        <h1 className="text-2xl font-bold text-gray-800">Employee Management</h1>
+        <p className="text-gray-600 mt-1">Click Edit to enable editing. Click Notes cell to open popup editor.</p>
+      </div>
+      
+      <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 140px)', width: '100%' }}>
+        <AgGridReact
+          ref={gridRef}
+          rowData={rowData}
+          columnDefs={columnDefs}
+          defaultColDef={defaultColDef}
+          suppressClickEdit={false}
+          singleClickEdit={true}
+          suppressRowClickSelection={true}
+          animateRows={true}
+          rowHeight={60}
+          stopEditingWhenCellsLoseFocus={false}
+          onCellEditingStopped={handleCellEditingStopped}
+          popupParent={document.body}
+        />
+      </div>
+    </div>
+  );
+};
+
+export default AGGridCustomEdit;
